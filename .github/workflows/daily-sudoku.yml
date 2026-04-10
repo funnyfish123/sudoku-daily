@@ -2,8 +2,8 @@ name: Daily Sudoku PDF
 
 on:
   schedule:
-    # Run at 8:00 AM PT (15:00 UTC) every day
-    - cron: "0 15 * * *"
+    # Run at 8:00 AM ET (12:00 UTC) every day
+    - cron: "0 12 * * *"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
