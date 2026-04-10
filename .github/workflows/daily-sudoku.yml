@@ -1,0 +1,98 @@
+name: Daily Sudoku PDF
+
+on:
+  schedule:
+    # Run at 8:00 AM PT (15:00 UTC) every day
+    - cron: "0 15 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install playwright pillow fpdf2
+          playwright install chromium
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Generate sudoku PDF
+        run: |
+          mkdir -p output
+          xvfb-run --auto-servernum python latimes_sudoku.py output
+
+      - name: Copy PDF to docs for GitHub Pages
+        run: |
+          mkdir -p docs
+          DATE=$(date +%Y-%m-%d)
+          cp output/sudoku_${DATE}.pdf docs/sudoku-today.pdf 2>/dev/null || cp output/sudoku_*.pdf docs/sudoku-today.pdf
+          cp output/sudoku_*.pdf docs/ 2>/dev/null || true
+
+      - name: Update download page
+        run: |
+          DATE=$(date +"%B %d, %Y")
+          cat > docs/index.html << HTMLEOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Daily Sudoku</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                max-width: 600px;
+                margin: 80px auto;
+                padding: 0 20px;
+                text-align: center;
+                color: #333;
+              }
+              h1 { font-size: 2em; margin-bottom: 0.2em; }
+              .date { color: #888; margin-bottom: 2em; }
+              .download-btn {
+                display: inline-block;
+                background: #222;
+                color: white;
+                padding: 16px 40px;
+                border-radius: 8px;
+                text-decoration: none;
+                font-size: 1.1em;
+                font-weight: 600;
+                margin: 20px 0;
+                transition: background 0.2s;
+              }
+              .download-btn:hover { background: #444; }
+              .info { color: #999; font-size: 0.9em; margin-top: 2em; }
+            </style>
+          </head>
+          <body>
+            <h1>Daily Sudoku</h1>
+            <p class="date">Updated: ${DATE}</p>
+            <p>Easy + Medium + Expert + Impossible<br>from the LA Times, in one printable PDF.</p>
+            <a href="sudoku-today.pdf" class="download-btn">Download Today's PDF</a>
+            <p class="info">Auto-generated daily at 8:00 AM PT</p>
+          </body>
+          </html>
+          HTMLEOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --cached --quiet || git commit -m "Update sudoku PDF for $(date +%Y-%m-%d)"
+          git push
