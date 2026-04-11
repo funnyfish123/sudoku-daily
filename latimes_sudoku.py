@@ -81,9 +81,8 @@ def find_game_frame(page: Page):
     return None
 
 
-def screenshot_grid(frame, path: Path) -> bool:
-    """Screenshot the sudoku grid from inside the game iframe."""
-    # Close any open menus (hamburger menu) by pressing Escape
+def close_menus(frame):
+    """Close any open hamburger menus."""
     try:
         frame.page.keyboard.press("Escape")
         frame.wait_for_timeout(500)
@@ -95,6 +94,11 @@ def screenshot_grid(frame, path: Path) -> bool:
             frame.wait_for_timeout(500)
     except Exception:
         pass
+
+
+def screenshot_grid(frame, path: Path) -> bool:
+    """Screenshot the sudoku grid from inside the game iframe."""
+    close_menus(frame)
 
     for sel in [".crossword.sudoku", ".crossword", ".grid-area"]:
         try:
@@ -110,6 +114,63 @@ def screenshot_grid(frame, path: Path) -> bool:
         except Exception:
             continue
     return False
+
+
+def reveal_and_screenshot(frame, path: Path) -> bool:
+    """Reveal all answers in the puzzle and screenshot the solved grid."""
+    close_menus(frame)
+
+    # Click the "Reveal" button in the toolbar, then "Puzzle" to reveal all
+    try:
+        # Try clicking Reveal button
+        reveal_btn = frame.locator("text=Reveal").first
+        if reveal_btn.is_visible():
+            reveal_btn.click()
+            frame.wait_for_timeout(500)
+            # Click "Puzzle" to reveal the whole puzzle
+            puzzle_btn = frame.locator("text=Puzzle").first
+            if puzzle_btn.is_visible():
+                puzzle_btn.click()
+                frame.wait_for_timeout(500)
+            # Confirm if there's a confirmation dialog
+            try:
+                confirm = frame.locator("text=OK, text=Yes, text=Confirm, button:has-text('Reveal')").first
+                if confirm.is_visible():
+                    confirm.click()
+                    frame.wait_for_timeout(500)
+            except Exception:
+                pass
+            frame.wait_for_timeout(1_000)
+            print("  Revealed answers")
+        else:
+            # Try via the hamburger menu
+            menu_btn = frame.locator("[class*='hamburger'], .menu-btn").first
+            if menu_btn.is_visible():
+                menu_btn.click()
+                frame.wait_for_timeout(500)
+                reveal_link = frame.locator("text=Reveal").first
+                if reveal_link.is_visible():
+                    reveal_link.click()
+                    frame.wait_for_timeout(500)
+                    puzzle_btn = frame.locator("text=Puzzle").first
+                    if puzzle_btn.is_visible():
+                        puzzle_btn.click()
+                        frame.wait_for_timeout(500)
+                    try:
+                        confirm = frame.locator("text=OK, text=Yes, text=Confirm").first
+                        if confirm.is_visible():
+                            confirm.click()
+                            frame.wait_for_timeout(500)
+                    except Exception:
+                        pass
+                    frame.wait_for_timeout(1_000)
+                    print("  Revealed answers via menu")
+
+        close_menus(frame)
+        return screenshot_grid(frame, path)
+    except Exception as e:
+        print(f"  Could not reveal answers: {e}")
+        return False
 
 
 def wait_for_puzzle_frame(page: Page, timeout_loops=24):
@@ -159,7 +220,7 @@ def handle_date_picker(page: Page, game_frame):
 
 
 def wait_for_grid_and_screenshot(page, game_frame, screenshot_path):
-    """Wait for grid to render and take screenshot."""
+    """Wait for grid to render, screenshot puzzle, then reveal and screenshot answers."""
     try:
         game_frame.locator(".crossword.sudoku, .crossword").first.wait_for(
             state="visible", timeout=30_000
@@ -168,19 +229,23 @@ def wait_for_grid_and_screenshot(page, game_frame, screenshot_path):
         game_frame.wait_for_load_state("networkidle")
         page.wait_for_timeout(5_000)
 
-    if screenshot_grid(game_frame, screenshot_path):
-        return screenshot_path
+    # Screenshot the unsolved puzzle
+    if not screenshot_grid(game_frame, screenshot_path):
+        iframe_el = page.locator("#amuselabs-module-container iframe").first
+        if iframe_el.is_visible():
+            iframe_el.screenshot(path=str(screenshot_path))
+            print("  Captured iframe element (fallback)")
+        else:
+            page.screenshot(path=str(screenshot_path))
+            print("  Captured full page (fallback)")
 
-    # Fallback: screenshot the iframe element
-    iframe_el = page.locator("#amuselabs-module-container iframe").first
-    if iframe_el.is_visible():
-        iframe_el.screenshot(path=str(screenshot_path))
-        print("  Captured iframe element (fallback)")
-        return screenshot_path
-
-    page.screenshot(path=str(screenshot_path))
-    print("  Captured full page (fallback)")
-    return screenshot_path
+    # Now reveal answers and screenshot the solved puzzle
+    answer_path = screenshot_path.parent / screenshot_path.name.replace("sudoku_", "answer_")
+    if reveal_and_screenshot(game_frame, answer_path):
+        return screenshot_path, answer_path
+    else:
+        print("  Could not capture answer grid")
+        return screenshot_path, None
 
 
 def capture_standard(page: Page, difficulty: str) -> Path | None:
@@ -211,7 +276,7 @@ def capture_standard(page: Page, difficulty: str) -> Path | None:
     if not game_frame:
         print("  ERROR: Game iframe not found")
         page.screenshot(path=str(screenshot_path))
-        return screenshot_path
+        return screenshot_path, None
 
     print(f"  Game iframe found: {game_frame.url[:80]}")
     game_frame = handle_date_picker(page, game_frame)
@@ -219,7 +284,7 @@ def capture_standard(page: Page, difficulty: str) -> Path | None:
     if not game_frame:
         print("  ERROR: Could not load puzzle")
         page.screenshot(path=str(screenshot_path))
-        return screenshot_path
+        return screenshot_path, None
 
     return wait_for_grid_and_screenshot(page, game_frame, screenshot_path)
 
@@ -240,7 +305,7 @@ def capture_impossible(page: Page) -> Path | None:
     if not game_frame:
         print("  ERROR: Game iframe not found")
         page.screenshot(path=str(screenshot_path))
-        return screenshot_path
+        return screenshot_path, None
 
     print(f"  Game iframe found: {game_frame.url[:80]}")
     game_frame = handle_date_picker(page, game_frame)
@@ -248,7 +313,7 @@ def capture_impossible(page: Page) -> Path | None:
     if not game_frame:
         print("  ERROR: Could not load puzzle")
         page.screenshot(path=str(screenshot_path))
-        return screenshot_path
+        return screenshot_path, None
 
     print(f"  Puzzle frame: {game_frame.url[:80]}")
     return wait_for_grid_and_screenshot(page, game_frame, screenshot_path)
@@ -311,30 +376,39 @@ def build_pdf(screenshots: dict[str, Path], output_path: Path):
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     pdf_path = OUTPUT_DIR / f"sudoku_{TODAY_STR}.pdf"
+    answers_path = OUTPUT_DIR / f"sudoku_answers_{TODAY_STR}.pdf"
 
     with sync_playwright() as p:
         browser, page = setup_browser(p)
 
         screenshots = {}
+        answer_screenshots = {}
+
         for diff in ["easy", "medium", "expert"]:
             try:
-                result = capture_standard(page, diff)
-                if result:
-                    screenshots[diff] = result
+                puzzle, answer = capture_standard(page, diff)
+                if puzzle:
+                    screenshots[diff] = puzzle
+                if answer:
+                    answer_screenshots[diff] = answer
             except Exception as e:
                 print(f"  ERROR: {e}")
 
         try:
-            result = capture_impossible(page)
-            if result:
-                screenshots["impossible"] = result
+            puzzle, answer = capture_impossible(page)
+            if puzzle:
+                screenshots["impossible"] = puzzle
+            if answer:
+                answer_screenshots["impossible"] = answer
         except Exception as e:
             print(f"  ERROR: {e}")
 
         browser.close()
 
     build_pdf(screenshots, pdf_path)
-    print(f"Done! Open: {pdf_path}")
+    if answer_screenshots:
+        build_pdf(answer_screenshots, answers_path)
+    print(f"Done!")
 
 
 if __name__ == "__main__":

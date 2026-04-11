@@ -15,19 +15,26 @@
     }
     h1 { font-size: 2em; margin-bottom: 0.2em; }
     .date { color: #888; margin-bottom: 2em; }
-    .download-btn {
+    .btn {
       display: inline-block;
-      background: #222;
-      color: white;
       padding: 16px 40px;
       border-radius: 8px;
       text-decoration: none;
       font-size: 1.1em;
       font-weight: 600;
-      margin: 20px 0;
-      transition: background 0.2s;
+      margin: 8px 0;
+      transition: opacity 0.2s;
     }
-    .download-btn:hover { background: #444; }
+    .btn:hover { opacity: 0.85; }
+    .btn-puzzle {
+      background: #2563eb;
+      color: white;
+    }
+    .btn-answers {
+      background: #e2e8f0;
+      color: #475569;
+    }
+    .buttons { display: flex; flex-direction: column; align-items: center; gap: 4px; }
     .info { color: #999; font-size: 0.9em; margin-top: 2em; }
   </style>
 </head>
@@ -35,7 +42,10 @@
   <h1>Daily Sudoku</h1>
   <p class="date">Updated: April 10, 2026</p>
   <p>Easy + Medium + Expert + Impossible<br>from the LA Times, in one printable PDF.</p>
-  <a href="sudoku-today.pdf" class="download-btn">Download Today's PDF</a>
-  <p class="info">Auto-generated daily at 8:00 AM PT</p>
+  <div class="buttons">
+    <a href="sudoku-today.pdf" class="btn btn-puzzle">Download Puzzles</a>
+    <a href="answers-today.pdf" class="btn btn-answers">View Answers</a>
+  </div>
+  <p class="info">Auto-generated daily at 8:00 AM ET</p>
 </body>
 </html>
