@@ -81,25 +81,8 @@ def find_game_frame(page: Page):
     return None
 
 
-def close_menus(frame):
-    """Close any open hamburger menus."""
-    try:
-        frame.page.keyboard.press("Escape")
-        frame.wait_for_timeout(500)
-        menu_btn = frame.locator(
-            ".hamburger, .menu-btn, .nav-toggle, [class*='hamburger']"
-        ).first
-        if menu_btn.is_visible():
-            menu_btn.click()
-            frame.wait_for_timeout(500)
-    except Exception:
-        pass
-
-
 def screenshot_grid(frame, path: Path) -> bool:
     """Screenshot the sudoku grid from inside the game iframe."""
-    close_menus(frame)
-
     for sel in [".crossword.sudoku", ".crossword", ".grid-area"]:
         try:
             el = frame.locator(sel).first
@@ -116,57 +99,18 @@ def screenshot_grid(frame, path: Path) -> bool:
     return False
 
 
-def reveal_and_screenshot(frame, path: Path) -> bool:
-    """Reveal all answers in the puzzle and screenshot the solved grid."""
-    close_menus(frame)
-
-    # Click the "Reveal" button in the toolbar, then "Puzzle" to reveal all
+def reveal_answers(page, frame, path: Path) -> bool:
+    """Reveal the solved grid: Assist → Reveal grid → OK → View Puzzle → screenshot."""
     try:
-        # Try clicking Reveal button
-        reveal_btn = frame.locator("text=Reveal").first
-        if reveal_btn.is_visible():
-            reveal_btn.click()
-            frame.wait_for_timeout(500)
-            # Click "Puzzle" to reveal the whole puzzle
-            puzzle_btn = frame.locator("text=Puzzle").first
-            if puzzle_btn.is_visible():
-                puzzle_btn.click()
-                frame.wait_for_timeout(500)
-            # Confirm if there's a confirmation dialog
-            try:
-                confirm = frame.locator("text=OK, text=Yes, text=Confirm, button:has-text('Reveal')").first
-                if confirm.is_visible():
-                    confirm.click()
-                    frame.wait_for_timeout(500)
-            except Exception:
-                pass
-            frame.wait_for_timeout(1_000)
-            print("  Revealed answers")
-        else:
-            # Try via the hamburger menu
-            menu_btn = frame.locator("[class*='hamburger'], .menu-btn").first
-            if menu_btn.is_visible():
-                menu_btn.click()
-                frame.wait_for_timeout(500)
-                reveal_link = frame.locator("text=Reveal").first
-                if reveal_link.is_visible():
-                    reveal_link.click()
-                    frame.wait_for_timeout(500)
-                    puzzle_btn = frame.locator("text=Puzzle").first
-                    if puzzle_btn.is_visible():
-                        puzzle_btn.click()
-                        frame.wait_for_timeout(500)
-                    try:
-                        confirm = frame.locator("text=OK, text=Yes, text=Confirm").first
-                        if confirm.is_visible():
-                            confirm.click()
-                            frame.wait_for_timeout(500)
-                    except Exception:
-                        pass
-                    frame.wait_for_timeout(1_000)
-                    print("  Revealed answers via menu")
-
-        close_menus(frame)
+        frame.locator('a[title="Assist"]').first.click()
+        frame.wait_for_timeout(1_000)
+        frame.locator("li.reveal-all-button a").first.click()
+        frame.wait_for_timeout(1_000)
+        frame.locator("text=OK").first.click()
+        frame.wait_for_timeout(3_000)
+        # "View Puzzle" is on the parent page, not in the iframe
+        page.locator("button", has_text="View Puzzle").first.click()
+        page.wait_for_timeout(2_000)
         return screenshot_grid(frame, path)
     except Exception as e:
         print(f"  Could not reveal answers: {e}")
@@ -229,7 +173,6 @@ def wait_for_grid_and_screenshot(page, game_frame, screenshot_path):
         game_frame.wait_for_load_state("networkidle")
         page.wait_for_timeout(5_000)
 
-    # Screenshot the unsolved puzzle
     if not screenshot_grid(game_frame, screenshot_path):
         iframe_el = page.locator("#amuselabs-module-container iframe").first
         if iframe_el.is_visible():
@@ -239,9 +182,9 @@ def wait_for_grid_and_screenshot(page, game_frame, screenshot_path):
             page.screenshot(path=str(screenshot_path))
             print("  Captured full page (fallback)")
 
-    # Now reveal answers and screenshot the solved puzzle
+    # Reveal answers and screenshot the solved grid
     answer_path = screenshot_path.parent / screenshot_path.name.replace("sudoku_", "answer_")
-    if reveal_and_screenshot(game_frame, answer_path):
+    if reveal_answers(page, game_frame, answer_path):
         return screenshot_path, answer_path
     else:
         print("  Could not capture answer grid")
