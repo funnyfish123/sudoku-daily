@@ -81,76 +81,42 @@ def find_game_frame(page: Page):
     return None
 
 
-def close_sidebar(frame):
-    """Close the hamburger sidebar menu if it's open."""
-    # The Amuse Labs game has a hamburger menu that opens a sidebar overlay
-    # within the .crossword element. We need to click the hamburger to toggle it,
-    # or use JS to find and hide the sidebar.
-    try:
-        # First try: click the hamburger/menu button to toggle it closed
-        # The hamburger is typically an <a> with title containing "menu" or a ≡ icon
-        result = frame.evaluate("""() => {
-            // Find elements that contain menu text like "More puzzles", "How to play"
-            const menuTexts = ['More puzzles', 'How to play', 'Save', 'Start again', 'Support'];
-            let menuContainer = null;
-
-            for (const text of menuTexts) {
-                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                while (walker.nextNode()) {
-                    if (walker.currentNode.textContent.trim() === text) {
-                        // Walk up to find the menu container
-                        let el = walker.currentNode.parentElement;
-                        for (let i = 0; i < 8; i++) {
-                            if (el && el.parentElement) {
-                                el = el.parentElement;
-                            }
-                        }
-                        if (el) menuContainer = el;
-                        break;
-                    }
-                }
-                if (menuContainer) break;
-            }
-
-            if (menuContainer) {
-                // Hide the menu container and all its ancestors up to but not including .crossword
-                let el = menuContainer;
-                while (el && !el.classList.contains('crossword')) {
-                    el.style.display = 'none';
-                    el = el.parentElement;
-                    // Stop if we've hidden enough
-                    break;
-                }
-                return 'hidden menu container';
-            }
-
-            // Fallback: hide any element containing menu text
-            const allEls = document.querySelectorAll('*');
-            for (const el of allEls) {
-                if (el.children.length > 2 && el.textContent.includes('More puzzles') && el.textContent.includes('Support')) {
-                    el.style.display = 'none';
-                    return 'hidden element containing menu text';
-                }
-            }
-
-            return 'no menu found';
-        }""")
-        print(f"  close_sidebar: {result}")
-        frame.wait_for_timeout(300)
-    except Exception as e:
-        print(f"  close_sidebar error: {e}")
-
-    # Press Escape to dismiss any popups
-    try:
-        frame.page.keyboard.press("Escape")
-        frame.wait_for_timeout(300)
-    except Exception:
-        pass
-
-
 def screenshot_grid(frame, path: Path) -> bool:
-    """Screenshot the sudoku grid from inside the game iframe."""
-    close_sidebar(frame)
+    """Screenshot just the sudoku grid cells, excluding any sidebar overlay."""
+    try:
+        # Get the bounding box of the grid cells to crop precisely
+        # This avoids capturing the sidebar menu that overlaps .crossword.sudoku
+        grid_box = frame.evaluate("""() => {
+            const cells = document.querySelectorAll('.box.letter');
+            if (cells.length === 0) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            cells.forEach(cell => {
+                const r = cell.getBoundingClientRect();
+                if (r.x < minX) minX = r.x;
+                if (r.y < minY) minY = r.y;
+                if (r.x + r.width > maxX) maxX = r.x + r.width;
+                if (r.y + r.height > maxY) maxY = r.y + r.height;
+            });
+            return {x: minX, y: minY, width: maxX - minX, height: maxY - minY};
+        }""")
+        if grid_box and grid_box["width"] > 100:
+            # Add small padding
+            pad = 2
+            frame.page.screenshot(
+                path=str(path),
+                clip={
+                    "x": grid_box["x"] - pad,
+                    "y": grid_box["y"] - pad,
+                    "width": grid_box["width"] + 2 * pad,
+                    "height": grid_box["height"] + 2 * pad,
+                },
+            )
+            print(f"  Captured grid cells ({grid_box['width']:.0f}x{grid_box['height']:.0f})")
+            return True
+    except Exception as e:
+        print(f"  Grid cell clip failed: {e}")
+
+    # Fallback: screenshot the .crossword element directly
     for sel in [".crossword.sudoku", ".crossword", ".grid-area"]:
         try:
             el = frame.locator(sel).first
@@ -158,9 +124,7 @@ def screenshot_grid(frame, path: Path) -> bool:
                 el.screenshot(path=str(path))
                 box = el.bounding_box()
                 if box:
-                    print(
-                        f"  Captured grid via {sel} ({box['width']:.0f}x{box['height']:.0f})"
-                    )
+                    print(f"  Captured grid via {sel} ({box['width']:.0f}x{box['height']:.0f})")
                 return True
         except Exception:
             continue
@@ -168,74 +132,64 @@ def screenshot_grid(frame, path: Path) -> bool:
 
 
 def reveal_answers(page, frame, path: Path) -> bool:
-    """Reveal the solved grid: Assist → Reveal grid → OK → hide overlay → screenshot."""
+    """Reveal the solved grid: Assist → Reveal grid → OK → View Puzzle → screenshot."""
     try:
-        # Click Assist menu
-        frame.locator('a[title="Assist"]').first.click()
+        # Click Assist menu — try multiple selectors
+        clicked = False
+        for sel in ['a[title="Assist"]', 'text=Assist', '[class*="assist"]']:
+            try:
+                el = frame.locator(sel).first
+                el.click(timeout=5_000)
+                clicked = True
+                break
+            except Exception:
+                continue
+        if not clicked:
+            print("  Could not find Assist button")
+            return False
+
         frame.wait_for_timeout(1_000)
 
         # Click "Reveal grid"
-        frame.locator("li.reveal-all-button a").first.click()
-        frame.wait_for_timeout(1_000)
-
-        # Click OK to confirm
-        frame.locator("text=OK").first.click()
-        frame.wait_for_timeout(3_000)
-
-        # Use JS to hide the congratulations overlay and show the filled grid
-        frame.evaluate("""() => {
-            // Hide congratulations/completion overlays
-            document.querySelectorAll(
-                '.congrats, .congratulations, .completion, .puzzle-complete, ' +
-                '.overlay, .modal, .popup, .score, ' +
-                '[class*="congrat"], [class*="complete"], [class*="overlay"], ' +
-                '[class*="modal"], [class*="score"], [class*="popup"], ' +
-                '[class*="finish"], [class*="solved"], [class*="success"]'
-            ).forEach(el => { el.style.display = 'none'; });
-
-            // Also hide any absolutely/fixed positioned elements that might be overlays
-            document.querySelectorAll('*').forEach(el => {
-                const style = window.getComputedStyle(el);
-                const zIndex = parseInt(style.zIndex);
-                if ((style.position === 'fixed' || style.position === 'absolute') &&
-                    zIndex > 10 &&
-                    !el.classList.contains('crossword') &&
-                    !el.classList.contains('sudoku') &&
-                    !el.closest('.crossword')) {
-                    el.style.display = 'none';
-                }
-            });
-        }""")
-        frame.wait_for_timeout(1_000)
-
-        # Try clicking "View Puzzle" link if it exists (various selectors)
-        for selector in [
-            "text=View Puzzle",
-            "a:has-text('View Puzzle')",
-            "button:has-text('View Puzzle')",
-            "*:has-text('View Puzzle')",
-        ]:
+        for sel in ["li.reveal-all-button a", "text=Reveal grid", 'text="Reveal grid"']:
             try:
-                el = frame.locator(selector).first
-                if el.is_visible(timeout=1_000):
-                    el.click()
-                    frame.wait_for_timeout(2_000)
-                    print("  Clicked 'View Puzzle'")
-                    break
+                el = frame.locator(sel).first
+                el.click(timeout=5_000)
+                break
             except Exception:
                 continue
 
-        # Also try on the parent page
+        frame.wait_for_timeout(1_000)
+
+        # Click OK to confirm
+        frame.locator("text=OK").first.click(timeout=5_000)
+        frame.wait_for_timeout(3_000)
+
+        # Click "View Puzzle" to dismiss congratulations overlay
+        # Try on parent page first (worked in local testing)
+        vp_clicked = False
         try:
             vp = page.locator("text=View Puzzle").first
-            if vp.is_visible(timeout=1_000):
-                vp.click()
-                page.wait_for_timeout(2_000)
-                print("  Clicked 'View Puzzle' on parent page")
+            vp.click(timeout=5_000)
+            page.wait_for_timeout(2_000)
+            print("  Clicked 'View Puzzle' on parent page")
+            vp_clicked = True
         except Exception:
             pass
 
-        close_sidebar(frame)
+        if not vp_clicked:
+            # Try in the iframe
+            for sel in ["text=View Puzzle", "a:has-text('View Puzzle')"]:
+                try:
+                    el = frame.locator(sel).first
+                    el.click(timeout=3_000)
+                    frame.wait_for_timeout(2_000)
+                    print("  Clicked 'View Puzzle' in iframe")
+                    vp_clicked = True
+                    break
+                except Exception:
+                    continue
+
         return screenshot_grid(frame, path)
     except Exception as e:
         print(f"  Could not reveal answers: {e}")
