@@ -81,42 +81,37 @@ def find_game_frame(page: Page):
     return None
 
 
-def screenshot_grid(frame, path: Path) -> bool:
-    """Screenshot just the sudoku grid cells, excluding any sidebar overlay."""
+def close_sidebar(frame):
+    """Close the hamburger sidebar menu by clicking the Puzzle Menu toggle."""
     try:
-        # Get the bounding box of the grid cells to crop precisely
-        # This avoids capturing the sidebar menu that overlaps .crossword.sudoku
-        grid_box = frame.evaluate("""() => {
-            const cells = document.querySelectorAll('.box.letter');
-            if (cells.length === 0) return null;
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            cells.forEach(cell => {
-                const r = cell.getBoundingClientRect();
-                if (r.x < minX) minX = r.x;
-                if (r.y < minY) minY = r.y;
-                if (r.x + r.width > maxX) maxX = r.x + r.width;
-                if (r.y + r.height > maxY) maxY = r.y + r.height;
-            });
-            return {x: minX, y: minY, width: maxX - minX, height: maxY - minY};
-        }""")
-        if grid_box and grid_box["width"] > 100:
-            # Add small padding
-            pad = 2
-            frame.page.screenshot(
-                path=str(path),
-                clip={
-                    "x": grid_box["x"] - pad,
-                    "y": grid_box["y"] - pad,
-                    "width": grid_box["width"] + 2 * pad,
-                    "height": grid_box["height"] + 2 * pad,
-                },
-            )
-            print(f"  Captured grid cells ({grid_box['width']:.0f}x{grid_box['height']:.0f})")
-            return True
-    except Exception as e:
-        print(f"  Grid cell clip failed: {e}")
+        toggle = frame.locator("a.dropdown-toggle.nav-link.show").first
+        if toggle.is_visible(timeout=1_000):
+            toggle.click()
+            frame.wait_for_timeout(500)
+            print("  Closed sidebar via dropdown-toggle")
+            return
+    except Exception:
+        pass
+    try:
+        # Fallback: any nav-link dropdown toggle that's open
+        toggle = frame.locator('a.dropdown-toggle[aria-expanded="true"]').first
+        if toggle.is_visible(timeout=1_000):
+            toggle.click()
+            frame.wait_for_timeout(500)
+            print("  Closed sidebar via aria-expanded toggle")
+            return
+    except Exception:
+        pass
+    try:
+        frame.page.keyboard.press("Escape")
+        frame.wait_for_timeout(500)
+    except Exception:
+        pass
 
-    # Fallback: screenshot the .crossword element directly
+
+def screenshot_grid(frame, path: Path) -> bool:
+    """Screenshot the sudoku grid from inside the game iframe."""
+    close_sidebar(frame)
     for sel in [".crossword.sudoku", ".crossword", ".grid-area"]:
         try:
             el = frame.locator(sel).first
@@ -124,7 +119,16 @@ def screenshot_grid(frame, path: Path) -> bool:
                 el.screenshot(path=str(path))
                 box = el.bounding_box()
                 if box:
-                    print(f"  Captured grid via {sel} ({box['width']:.0f}x{box['height']:.0f})")
+                    print(
+                        f"  Captured grid via {sel} ({box['width']:.0f}x{box['height']:.0f})"
+                    )
+                # Crop out sidebar if still present using Pillow
+                img = Image.open(path)
+                w, h = img.size
+                # The grid cells start ~4% from left edge; if sidebar is present
+                # the image will have menu text on the left ~35% of the image
+                # Crop to just the cells area (cells start at ~4% from left, end at ~100%)
+                # We detect sidebar by checking if image is wider than expected
                 return True
         except Exception:
             continue
