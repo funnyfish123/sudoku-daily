@@ -2,8 +2,10 @@ name: Daily Sudoku PDF
 
 on:
   schedule:
-    # Run at 8:00 AM ET (12:00 UTC) every day
-    - cron: "0 12 * * *"
+    # Run at 4:17 AM ET (08:17 UTC) every day.
+    # Off-peak minute + early hour to absorb GitHub Actions scheduler delay
+    # (top-of-hour and UTC-noon slots are the most congested).
+    - cron: "17 8 * * *"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
