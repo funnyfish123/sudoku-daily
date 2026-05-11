@@ -2,10 +2,10 @@ name: Daily Sudoku PDF
 
 on:
   schedule:
-    # Run at 4:17 AM ET (08:17 UTC) every day.
-    # Off-peak minute + early hour to absorb GitHub Actions scheduler delay
-    # (top-of-hour and UTC-noon slots are the most congested).
-    - cron: "17 8 * * *"
+    # Run at 12:30 AM CST (06:30 UTC) every day.
+    # Note: GitHub Actions cron is UTC and does not observe DST,
+    # so during CDT this fires at 1:30 AM local.
+    - cron: "30 6 * * *"
   workflow_dispatch: # Allow manual trigger
 
 permissions:
@@ -99,7 +99,7 @@ jobs:
               <a href="sudoku-today.pdf" class="btn btn-puzzle">Download Puzzles</a>
               <a href="answers-today.pdf" class="btn btn-answers">View Answers</a>
             </div>
-            <p class="info">Auto-generated daily at 8:00 AM ET</p>
+            <p class="info">Auto-generated daily at 12:30 AM CST</p>
           </body>
           </html>
           HTMLEOF
