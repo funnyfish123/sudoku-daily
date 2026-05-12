@@ -6,11 +6,17 @@ on:
     # Note: GitHub Actions cron is UTC and does not observe DST,
     # so during CDT this fires at 1:30 AM local.
     - cron: "30 6 * * *"
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: "Retry attempt number (auto-set when re-triggered on missing puzzles)"
+        required: false
+        default: "1"
 
 permissions:
   contents: write
   pages: write
+  actions: write # needed to re-dispatch this workflow on missing puzzles
 
 jobs:
   generate:
@@ -36,6 +42,25 @@ jobs:
         run: |
           mkdir -p output
           xvfb-run --auto-servernum python latimes_sudoku.py output
+
+      - name: Check for missing puzzles
+        id: check
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          missing=()
+          for diff in easy medium expert impossible; do
+            if [ ! -f "output/sudoku_${diff}_${DATE}.png" ]; then
+              missing+=("$diff")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing puzzles: ${missing[*]}"
+            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
+            echo "missing_count=${#missing[@]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "All four puzzles captured"
+            echo "missing_count=0" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Copy PDFs to docs for GitHub Pages
         run: |
@@ -105,9 +130,26 @@ jobs:
           HTMLEOF
 
       - name: Commit and push
+        if: steps.check.outputs.missing_count == '0'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/
           git diff --cached --quiet || git commit -m "Update sudoku PDF for $(date +%Y-%m-%d)"
           git push
+
+      - name: Re-trigger on missing puzzles
+        if: steps.check.outputs.missing_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
+          MISSING: ${{ steps.check.outputs.missing }}
+        run: |
+          MAX_ATTEMPTS=3
+          NEXT=$((ATTEMPT + 1))
+          if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+            echo "Already at attempt $ATTEMPT (max $MAX_ATTEMPTS). Missing puzzles persisted: $MISSING"
+            exit 1
+          fi
+          echo "Attempt $ATTEMPT failed to capture: $MISSING. Dispatching attempt $NEXT."
+          gh workflow run daily-sudoku.yml --ref "${{ github.ref_name }}" -f attempt=$NEXT
