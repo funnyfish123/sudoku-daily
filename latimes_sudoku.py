@@ -21,6 +21,7 @@ TODAY = date.today()
 TODAY_STR = TODAY.strftime("%Y-%m-%d")
 TODAY_LONG = TODAY.strftime("%B %d, %Y")
 BASE_URL = "https://www.latimes.com/games/sudoku"
+IMPOSSIBLE_URL = "https://www.latimes.com/games/impossible-sudoku"
 
 # In CI, run headless with xvfb providing a virtual display
 IS_CI = os.environ.get("CI") == "true"
@@ -46,12 +47,8 @@ def setup_browser(p):
     return browser, page
 
 
-def navigate_to_sudoku_page(page: Page):
-    """Load the LA Times sudoku page, dismiss terms, wait for ad."""
-    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
-    page.wait_for_timeout(3_000)
-
-    # Dismiss terms modal
+def dismiss_terms_modal(page: Page):
+    """Dismiss the terms modal if it is showing."""
     try:
         btn = page.get_by_role("button", name="Continue")
         btn.wait_for(state="visible", timeout=5_000)
@@ -60,6 +57,14 @@ def navigate_to_sudoku_page(page: Page):
         print("  Dismissed terms modal")
     except Exception:
         pass
+
+
+def navigate_to_sudoku_page(page: Page):
+    """Load the LA Times sudoku page, dismiss terms, wait for ad."""
+    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
+    page.wait_for_timeout(3_000)
+
+    dismiss_terms_modal(page)
 
     # Wait for ad to clear
     print("  Waiting for ad to clear...")
@@ -320,10 +325,16 @@ def capture_impossible(page: Page) -> Path | None:
     screenshot_path = OUTPUT_DIR / f"sudoku_impossible_{TODAY_STR}.png"
     print(f"\n--- IMPOSSIBLE ---")
 
-    navigate_to_sudoku_page(page)
+    # The "Impossible Sudoku" link on the main sudoku page matches two anchors,
+    # and the first one is hidden (no bounding box), so clicking it times out.
+    # Navigate straight to its href instead. This page has no "Easy" button to
+    # anchor an ad wait on; wait_for_puzzle_frame below absorbs the pre-roll ad,
+    # which clears in ~20s.
+    page.goto(IMPOSSIBLE_URL, wait_until="domcontentloaded", timeout=60_000)
+    page.wait_for_timeout(3_000)
+    print(f"  Opened {IMPOSSIBLE_URL}")
 
-    page.locator("a", has_text="Impossible Sudoku").first.click()
-    print("  Clicked Impossible Sudoku link")
+    dismiss_terms_modal(page)
 
     page.wait_for_timeout(10_000)
 
