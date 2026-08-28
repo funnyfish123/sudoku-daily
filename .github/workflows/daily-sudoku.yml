@@ -6,12 +6,26 @@ on:
     # Note: GitHub Actions cron is UTC and does not observe DST,
     # so during CDT this fires at 1:30 AM local.
     - cron: "30 6 * * *"
+    # Catch-up attempts. GitHub delays scheduled triggers under load and can
+    # drop them entirely with no run record (this happened 2026-08-28), so
+    # don't depend on the 06:30 trigger alone. Each catch-up exits in seconds
+    # when the day's puzzle is already published. These stay inside the same
+    # UTC day as the primary run so the date that names the files is the same.
+    - cron: "23 8-23/3 * * *"
   workflow_dispatch:
     inputs:
       attempt:
         description: "Retry attempt number (auto-set when re-triggered on missing puzzles)"
         required: false
         default: "1"
+
+# The primary and a catch-up can fire close together when the primary is
+# running hours late, and two concurrent runs would both generate and both
+# try to push. Queue them instead; the second one's guard will see the
+# first one's push and skip.
+concurrency:
+  group: daily-sudoku
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -26,12 +40,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Makes the job idempotent so the catch-up crons above are cheap and safe
+      # to run repeatedly. Uses bare `date` (not `date -u`) to match both
+      # date.today() in latimes_sudoku.py and every other step in this file.
+      #
+      # Queries the live tip of the default branch rather than testing the
+      # working tree: a scheduled run checks out the commit main pointed at
+      # when the trigger was *created*, and these triggers have arrived up to
+      # 12h late, so the checked-out tree can be badly stale.
+      - name: Skip if today's puzzle is already published
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          if gh api "repos/${GITHUB_REPOSITORY}/contents/docs/sudoku_${DATE}.pdf" \
+               --jq .sha >/dev/null 2>&1; then
+            echo "sudoku_${DATE}.pdf is already published on the default branch; nothing to do."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No puzzle for ${DATE} yet; generating."
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
+        if: steps.guard.outputs.needed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.guard.outputs.needed == 'true'
         run: |
           pip install playwright pillow fpdf2
           playwright install chromium
@@ -39,11 +78,13 @@ jobs:
           sudo apt-get install -y xvfb
 
       - name: Generate sudoku PDF
+        if: steps.guard.outputs.needed == 'true'
         run: |
           mkdir -p output
           xvfb-run --auto-servernum python latimes_sudoku.py output
 
       - name: Check for missing puzzles
+        if: steps.guard.outputs.needed == 'true'
         id: check
         run: |
           DATE=$(date +%Y-%m-%d)
@@ -63,6 +104,7 @@ jobs:
           fi
 
       - name: Copy PDFs to docs for GitHub Pages
+        if: steps.guard.outputs.needed == 'true'
         run: |
           mkdir -p docs
           DATE=$(date +%Y-%m-%d)
@@ -71,6 +113,7 @@ jobs:
           cp output/*.pdf docs/ 2>/dev/null || true
 
       - name: Update download page
+        if: steps.guard.outputs.needed == 'true'
         run: |
           DATE=$(date +"%B %d, %Y")
           cat > docs/index.html << 'HTMLEOF'
@@ -130,7 +173,7 @@ jobs:
           HTMLEOF
 
       - name: Commit and push
-        if: steps.check.outputs.missing_count == '0'
+        if: steps.guard.outputs.needed == 'true' && steps.check.outputs.missing_count == '0'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -139,7 +182,7 @@ jobs:
           git push
 
       - name: Re-trigger on missing puzzles
-        if: steps.check.outputs.missing_count != '0'
+        if: steps.guard.outputs.needed == 'true' && steps.check.outputs.missing_count != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
