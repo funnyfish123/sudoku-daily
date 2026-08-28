@@ -19,6 +19,14 @@ on:
         required: false
         default: "1"
 
+# The primary and a catch-up can fire close together when the primary is
+# running hours late, and two concurrent runs would both generate and both
+# try to push. Queue them instead; the second one's guard will see the
+# first one's push and skip.
+concurrency:
+  group: daily-sudoku
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pages: write
@@ -35,12 +43,20 @@ jobs:
       # Makes the job idempotent so the catch-up crons above are cheap and safe
       # to run repeatedly. Uses bare `date` (not `date -u`) to match both
       # date.today() in latimes_sudoku.py and every other step in this file.
+      #
+      # Queries the live tip of the default branch rather than testing the
+      # working tree: a scheduled run checks out the commit main pointed at
+      # when the trigger was *created*, and these triggers have arrived up to
+      # 12h late, so the checked-out tree can be badly stale.
       - name: Skip if today's puzzle is already published
         id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          if [ -f "docs/sudoku_${DATE}.pdf" ]; then
-            echo "sudoku_${DATE}.pdf is already committed; nothing to do."
+          if gh api "repos/${GITHUB_REPOSITORY}/contents/docs/sudoku_${DATE}.pdf" \
+               --jq .sha >/dev/null 2>&1; then
+            echo "sudoku_${DATE}.pdf is already published on the default branch; nothing to do."
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
             echo "No puzzle for ${DATE} yet; generating."
